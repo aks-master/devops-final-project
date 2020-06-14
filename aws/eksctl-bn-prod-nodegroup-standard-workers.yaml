@@ -1,0 +1,152 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  EKS nodes (AMI family: AmazonLinux2, SSH access: false, private networking:
+  false) 
+Resources:
+  EgressInterCluster:
+    Type: 'AWS::EC2::SecurityGroupEgress'
+    Properties:
+      Description: >-
+        Allow control plane to communicate with worker nodes in group
+        standard-workers (kubelet and workload TCP ports)
+      DestinationSecurityGroupId: !Ref SG
+      FromPort: 1025
+      GroupId: !ImportValue 'eksctl-bn-prod-cluster::SecurityGroup'
+      IpProtocol: tcp
+      ToPort: 65535
+  EgressInterClusterAPI:
+    Type: 'AWS::EC2::SecurityGroupEgress'
+    Properties:
+      Description: >-
+        Allow control plane to communicate with worker nodes in group
+        standard-workers (workloads using HTTPS port, commonly used with
+        extension API servers)
+      DestinationSecurityGroupId: !Ref SG
+      FromPort: 443
+      GroupId: !ImportValue 'eksctl-bn-prod-cluster::SecurityGroup'
+      IpProtocol: tcp
+      ToPort: 443
+  IngressInterCluster:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    Properties:
+      Description: >-
+        Allow worker nodes in group standard-workers to communicate with control
+        plane (kubelet and workload TCP ports)
+      FromPort: 1025
+      GroupId: !Ref SG
+      IpProtocol: tcp
+      SourceSecurityGroupId: !ImportValue 'eksctl-bn-prod-cluster::SecurityGroup'
+      ToPort: 65535
+  IngressInterClusterAPI:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    Properties:
+      Description: >-
+        Allow worker nodes in group standard-workers to communicate with control
+        plane (workloads using HTTPS port, commonly used with extension API
+        servers)
+      FromPort: 443
+      GroupId: !Ref SG
+      IpProtocol: tcp
+      SourceSecurityGroupId: !ImportValue 'eksctl-bn-prod-cluster::SecurityGroup'
+      ToPort: 443
+  IngressInterClusterCP:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    Properties:
+      Description: >-
+        Allow control plane to receive API requests from worker nodes in group
+        standard-workers
+      FromPort: 443
+      GroupId: !ImportValue 'eksctl-bn-prod-cluster::SecurityGroup'
+      IpProtocol: tcp
+      SourceSecurityGroupId: !Ref SG
+      ToPort: 443
+  NodeGroup:
+    Type: 'AWS::AutoScaling::AutoScalingGroup'
+    Properties:
+      DesiredCapacity: '3'
+      LaunchTemplate:
+        LaunchTemplateName: !Sub '${AWS::StackName}'
+        Version: !GetAtt NodeGroupLaunchTemplate.LatestVersionNumber
+      MaxSize: '4'
+      MinSize: '1'
+      Tags:
+        - Key: Name
+          PropagateAtLaunch: 'true'
+          Value: bn-prod-standard-workers-Node
+        - Key: kubernetes.io/cluster/bn-prod
+          PropagateAtLaunch: 'true'
+          Value: owned
+      VPCZoneIdentifier: !Split 
+        - ','
+        - !ImportValue 'eksctl-bn-prod-cluster::SubnetsPublic'
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MaxBatchSize: '1'
+        MinInstancesInService: '0'
+  NodeGroupLaunchTemplate:
+    Type: 'AWS::EC2::LaunchTemplate'
+    Properties:
+      LaunchTemplateData:
+        IamInstanceProfile:
+          Arn: !GetAtt NodeInstanceProfile.Arn
+        ImageId: ami-082bb518441d3954c
+        InstanceType: t2.micro
+        NetworkInterfaces:
+          - AssociatePublicIpAddress: true
+            DeviceIndex: 0
+            Groups:
+              - !ImportValue 'eksctl-bn-prod-cluster::SharedNodeSecurityGroup'
+              - !Ref SG
+        UserData: >-
+          H4sIAAAAAAAA/6xaeXPiyJL/35+i1tPxYjrcEugAG96wsQIJNzZgc5i2e3bWUZQKKKPLpRIC93o/+0ZJHJJK89rzYnoixqGszKw8f5mAfkGOH9kS8r0FWZ4FEK3hEodN4EWOc0YjD7l280wCEqhsIK04ZF5JBCohoiRgYSXAVCJeyKCHcGXu+yxkFAYydFQ5XJ3FlDD8vCAODrkW5HsMe6wJ/vcMAAB+AXgdIuZIYYARWRAEwl3IsGsDm/qBRDwQeYSBhU/BOppjB7MvyYPhwjffA33iRVuggl+Nvvr5LNH4+wTTDUH4j73+vo+gA1zMoA0ZBAGk0MUM07AJxtZ17274BRjfJs+m1TUe+tPnlJbIWt6GUN9zsce6xMGtCmaokppbOeiTsbfZX3Tt+HPoAOjZIGSQEZS7q9N/mEyt8bM5nHwBwzvTeu4bbat/eJgaveF08tNr9zHI3Jq65/meVHJporp3/wX0hpOpMexYzz3zw3c4XHNyUyqyxWjCIGWtwmMlCmllTryDIPjvhAEASfJ8G0skaH36sbfkvXjowDl2wgNDGpL3L9AJVlBO7ZGJXzlUl0Ts1qcfGWey+ly4lQLf5soGxuPz/Z05yR5TvCQhwzS5t8VohLPEmLCVxCDx2NGYNCVZFdBx/FgKKNkQBy+xnWo5nad9FFB/Q2xMWzAOs4e+x/VjKtHIY8TFLdtHa0yzEcEs9ulaCpxoSbwW8khW3iPSnHiSTWir4gesgjzCw15g4V2c8vCUch4PM9nOcAW+LRFvQWHGJOLCJW59+sE7wbqdPFud8bPR6dw9DKfvsr2mMkZUTo/zjfIuw6QTYRzKyHd5DVUCGIVYgq5d15uarGSu5hWSwoxQcSlZ3kHXyQetjJmXJ+c8A8CPPUybgPo+a/L/nQEQQLZqgkRmDyb7v0fZMIUI2a4oVYnrdVgCV/w6rgBTl4Qh8b2wCc6rdV0/zyGXlNgnBqMVhRKGIZPUIwMP5qH1h8bAas09XiB2jsEamvd3veG0tWIsCJuViqk32kbXvGrUNaNeb9Ta3Zra6FZ15bLWbdcudTlcK/LxMt4o+TTktZ9y2apXVb2qKLqm19SfBq8c6j4WnEw7t4rdjJwobUTo4kM8hJbnXbqkfhSkbLz/bUhtiTcIpuHpkrRNWx/1Jo+gP3MmuQbaNsVh2ARVOfkvJQZkhimXbB4mk7yv4fVVyD3YKHPMoJJyR2yFPUYQZFxiX9/Q872d60fhgQAA9uDcwXYTLKAT4j05xvOV769PXAiiFZ5O+02gutVQFOa4tKdua9VGRtAh2GMdg4N+Pi4Iyoiyo7E+JW85W13fxk3wLbXkX9pl7MWxnVhYy1qYMDx4MM+i7TlQknCTkg3PY/q02B+lNWMOJ+ltElCqslLl+VCqOQ7fhcRrHh7TKZYwLDBkEcXXkOFjwMc+gwzfpvnjiwOmHUwZX0Qgw5lArolnN8GesZPkOaJJgJLjMBGd9iftw/pzlP1LVbkHtQ+VpcT/ta3r3hB0rPG01+11jKmVUJPzQa/X2ZmdjjHvLI241zaWvbZhGsP2cv26WpPrRlxtG6Owa5jGbDAexNboyZyNRqYVB9T+dpMGDbk1x76evQ3a+qM5tWqDqREP3wx18LKMB13/0Zz2Upp5pMXdqTUdtK1rQ3mwUiTaDm6hNiPfH2+i749jB711OsakF5ujp5tb/3tvtUFDY2S12yPDXC6te4NbPfI7y6XVNu6/aomS9uOjvp0uurPp0PU6jj9y2td369Fo9ITUu+XblbsgZOHek8h7ul6x7sBRb77eqWjSDc2qr3bTlW4SVagxaPS7dba1X5A5cjuNgf2Gt53Fne/fEm/XfZv2G+vreVtZtF+eHq+c2+1F4FoXl+ru7TVOlPT0+uMLfgovtNg3EZ2T6ZYoi0mMyCtuY3eH8Gi61G/RWO9AY+lQl9S72NXdyUwLr16Gelox9/rYda86Zi/ss4e7a/YY6/1+G8ZTS1Fu63pn/OjfDRUyXofVr/5F7xs0md/r3N/ao6/w6XsnUXJXI3X2OrtwNtFD/PS27ca73cVL36/qUHMNZ628MJ3pT+OYbl19ePPw9P1mAw1nPDAr/X51dJkoub1jzkMv2tbiF2U4oa8mtTpGbBkGHLwMOlZsLp/M2bh6b4y+VtrGyDSWt+uBccXTa1ux1U6UVOJRd2AM2sbiqpjW/j6tbeNmM34w2pPetAdXtE6dN3p/peq76midNlnXrt5uLyfz7fVjGy6cMXaHCO+cl3q79lLtmPPH4NIeL+3dRGdPs8btxBj1VfSVzSbdQXBjhN1EybJSR49maO++bbVrdLMe07692gwuZg/fQveyejFbbK+tr+FF43X7Oh5u6NuNfjWl/XGgV3ZavYJSJb3XuO7MwvHWH+sD81u79l1vqNOrzSKCG91bvN55g0V1O3vaDS/W7rL90F2/rIb1HXUuXl8enRT0tclTF0F/gQdDK6poUf1hG3S8C9fVv80fhw/XL+6mchXPtM2tF3eHt3438s03XzO+3z00ht3JTaJkBI1lhF7GKtx2B73t2yremgv0VZ/o3zurRWfW1mD/Sq9Fr/e+M99Y1krtzR6nDdZ41VsnmLCGZhlIfAibjpPhY8MyMxc3ShaZwwNy758zY+MEudJ+NLDdn46nE942wd+6MAHAV40m2K8kef50LUn94R5v2cmf9Dk7ZVMHf6qJ/4tCzrkfAP/1c4nUxo/yo4hS7DHpYOOHBdOBl066hBBQvMAUewiHTfDj/exg+zEMf82wveOn3WWL0ekpX0fp1iLnl6jTmpWsjkpWli7DrC4JMH+NvRxFIrnH7Fq+T6LvupDHAMahRKArZa73aYYRe5v9dyV/YdhnPu58tLNsVb7aOpAuMVC1dIgQTSBtFVmpF2ioJisHvkvt8qBN3ZNqVynmaSfJ9OMBAETgcrUjRVFSEtWKTG+KXSQhXdYLZi21UC4o14uEGpT3Qo0DQVBNa1BW9YJ/qOaJTnNio2AFLV5Ba/YpEAdJTiyGmmsrmlsiKTqOim5S7pWiFtjYKfj6nqLJLrZJ5ALlYFYxGExIRiTV2VyR+cc4Byj6Mf2C6UUzefAFd9xSU91aCTEo3sHL4sh1zIkmFsFeT/UQhnwUuF3FXNCaeH8kKaroOaoJJYBqe56jTUjsNUSVsluLQaPF3G4VLGtF05DYuIiHsFiwy7Kex15JApRCEetiM0OlWHa62Eq22IEiqaQFxSQWIxOoIjLx5hPKrsSqksjbgiDT9jHQasdyyytahWIO3TL0YGqh0VaKcF2SCEHSLUaCliBWJDXEwnSL6XGLZemWgBDVRHgRIABpAoqKJYTEtJJibzJVDl3oOEBRjoBEEPXBKZ1iQeWuhkqJcYIHtbxQEupi7QRaWT0VHNVFnkCzS/LGNJhzhbetIAoLXcYnQI6wKq8vEVntQmqpGPyVECluo4ioeYe1ooXCAOf1XtLjYiULydfyyeeXF3Cz5hV122rpXBGASGxwwUzelJkMucrenFOl5a1JG1Sc0MKcEsGYljXIIrta6eqhQwScdU9TWj0OJ3GhKIt5UoU54FmKG5gqbGCuANtcUbHPal5pIebqhct50DvEmGgljViAEtELKILlUoxxMkaKorSIecmNIqYIyeH9eiVO3m3OWF6xwnKsFLKFxKHOobG4NBARtnjwsiXJr9OKYmI/EK2I87qsVEWcFzYGPZ+KQMB9WmxhIrC4ZdsuU7NFgEqWgpJs5o1ZiuFJYKZQPCVTXMl1+UopabDiYsnU/ORnRb+pVtzxoXjzVhEXNbcUvkRZWtIGtGx/pmXLq15iXY7CS1nPuwSPdXt1qOM8w0KYH7Ss43jR5oKHSlxZiB2NSpAUFZcfIu6vQclqLcK/K3alGHRSrIMELDShVsWPouInyGKJ84gLACqA5alNPvZTGtw+B74dyi4MPvqx/5f/SH5cn8Nwlf4QH2IGJB9gSvGWsCwpIAFeQOJkaZ4feSFmqegi8hAjvgeWmD0fjPn1M/iRnAIQr4iDAcXQBoef3J/ZLsCA8/0T2KdvrcgCgN9/B+effuQY389Bq8Wpyvs5+OMP8I9/7Lm4An74f+B/fq9KjT8uPvHjfwK2yn0vg9HKB3vuDJliFtET3+Lw3Y3texj89q9CDMB76vr+BYTW+adfUUQdIEkhcbDHkq8Qm5WKUm/Iao2vi8nfigMZDlny46dkQwYryQ9JEgk2+ufzRGPmNYR/X2vmzYai2unTvfU3KOZp+Xy+Lx0/ogj/2e+h4BfAViQECHrA32BKiY3B4VWKVAGCDPxnqfzxbRHw22/WXTcX89PrH0Lg8m9zlAQgw8CfU5aDUZlXPZrSp1+zVc2LLi95/jkV5tal0UheCkDMATbEru9JFDs+tAtn6Y+qh+81C4chg5Rlzv4cBf6dV6cEhLis1c7P/j8AAP//ejlgxq8lAAA=
+      LaunchTemplateName: !Sub '${AWS::StackName}'
+  NodeInstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Path: /
+      Roles:
+        - !Ref NodeInstanceRole
+  NodeInstanceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action:
+              - 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+        Version: 2012-10-17
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy'
+        - 'arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy'
+        - 'arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly'
+      Path: /
+  SG:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: >-
+        Communication between the control plane and worker nodes in group
+        standard-workers
+      Tags:
+        - Key: kubernetes.io/cluster/bn-prod
+          Value: owned
+        - Key: Name
+          Value: !Sub '${AWS::StackName}/SG'
+      VpcId: !ImportValue 'eksctl-bn-prod-cluster::VPC'
+Outputs:
+  FeatureLocalSecurityGroup:
+    Value: true
+  FeaturePrivateNetworking:
+    Value: false
+  FeatureSharedSecurityGroup:
+    Value: true
+  InstanceProfileARN:
+    Export:
+      Name: !Sub '${AWS::StackName}::InstanceProfileARN'
+    Value: !GetAtt NodeInstanceProfile.Arn
+  InstanceRoleARN:
+    Export:
+      Name: !Sub '${AWS::StackName}::InstanceRoleARN'
+    Value: !GetAtt NodeInstanceRole.Arn
